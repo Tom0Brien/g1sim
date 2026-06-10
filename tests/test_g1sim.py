@@ -89,3 +89,82 @@ def test_g1sim_get_obs(device):
     
     # On reset, the joint position error (indices 12:41) should be 0 
     assert torch.allclose(obs[:, 12:41], torch.zeros(5, 29, device=device), atol=1e-5)
+
+def test_g1sim_foot_data(device):
+    env = G1Sim(nenv=2, device=device)
+    
+    # Check shape
+    assert env.foot_pos.shape == (6, 2)
+    assert env.foot_vel.shape == (6, 2)
+    assert env.contact_forces.shape == (8, 2)
+    
+    env.reset_all(seed=42, noise=0.0, drop=0.0)
+    torch.cuda.synchronize()
+    
+    # Step physics to populate foot data from CUDA
+    env.step(nsub=10)
+    torch.cuda.synchronize()
+    
+    # Foot positions should be populated
+    assert not torch.all(env.foot_pos == 0.0)
+    
+    # Because it is standing, the feet Z coordinates should be close to 0 (the ground)
+    # left foot z = 2, right foot z = 5
+    assert torch.all(env.foot_pos[2, :] < 0.15)
+    assert torch.all(env.foot_pos[5, :] < 0.15)
+    assert torch.all(env.foot_pos[2, :] > -0.05)
+    assert torch.all(env.foot_pos[5, :] > -0.05)
+    
+    # Contact forces should not be all zero since the robot is standing on the ground
+    assert torch.any(env.contact_forces > 0.0)
+
+def test_g1sim_foot_kinematics_vs_mujoco(device):
+    import numpy as np
+    import mujoco
+    import os
+    
+    env = G1Sim(nenv=1, device=device)
+    # Initialize with some random noise so joints and velocities are non-zero
+    env.reset_all(seed=42, noise=0.1, drop=0.0)
+    torch.cuda.synchronize()
+    
+    # Record state BEFORE step
+    qpos_before = env.qpos[:, 0].cpu().numpy().copy()
+    qvel_before = env.qvel[:, 0].cpu().numpy().copy()
+    
+    # Step exactly 1 substep so the foot_pos exported by CUDA is evaluated exactly on qpos_before
+    env.step(nsub=1)
+    torch.cuda.synchronize()
+    
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "..", "model", "g1_stripped.xml"))
+    d = mujoco.MjData(m)
+    
+    # Load the BEFORE state into mujoco
+    d.qpos[:] = qpos_before
+    d.qvel[:] = qvel_before
+    mujoco.mj_forward(m, d)
+    
+    # In MuJoCo, world is body 0. Left foot is body 7, Right foot is body 13.
+    left_foot_pos_mj = d.xpos[7]
+    right_foot_pos_mj = d.xpos[13]
+    
+    env_foot_pos = env.foot_pos[:, 0].cpu().numpy()
+    
+    assert np.allclose(env_foot_pos[0:3], left_foot_pos_mj, atol=1e-5)
+    assert np.allclose(env_foot_pos[3:6], right_foot_pos_mj, atol=1e-5)
+    
+    res = np.zeros(6)
+    
+    # flg_local=0 gets world frame twist [ang, lin]
+    mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, 7, res, 0)
+    left_foot_vel_mj = res[3:6]
+    
+    mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, 13, res, 0)
+    right_foot_vel_mj = res[3:6]
+    
+    env_foot_vel = env.foot_vel[:, 0].cpu().numpy()
+    
+    assert np.allclose(env_foot_vel[0:3], left_foot_vel_mj, atol=1e-5)
+    assert np.allclose(env_foot_vel[3:6], right_foot_vel_mj, atol=1e-5)
+

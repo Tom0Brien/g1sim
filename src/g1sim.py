@@ -11,15 +11,12 @@ if not os.path.exists(LIB_PATH):
 
 lib = ctypes.CDLL(LIB_PATH)
 
-# void g1_cuda_step(int nenv, int nsub, G1Real* qpos, G1Real* qvel, G1Real* anchor, const G1Real* ctrl, cudaStream_t stream)
+# void g1_cuda_step(int nenv, int nsub, G1Real* qpos, G1Real* qvel, G1Real* anchor, const G1Real* ctrl, G1Real* foot_pos, G1Real* foot_vel, G1Real* contact_forces, cudaStream_t stream)
 lib.g1_cuda_step.argtypes = [
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.c_void_p,
-    ctypes.c_void_p,
-    ctypes.c_void_p,
-    ctypes.c_void_p,
-    ctypes.c_void_p,
+    ctypes.c_int, ctypes.c_int,
+    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+    ctypes.c_void_p
 ]
 
 # void g1_cuda_reset_done(int nenv, G1Real* qpos, G1Real* qvel, G1Real* anchor, const uint8_t* done, unsigned seed, G1Real noise, G1Real drop, cudaStream_t stream)
@@ -51,6 +48,9 @@ class G1Sim:
         self.qvel = torch.zeros((self.NV, self.nenv), dtype=torch.float32, device=self.device)
         self.anchor = torch.full((2 * self.NC, self.nenv), 1e30, dtype=torch.float32, device=self.device)
         self.ctrl = torch.zeros((self.NU, self.nenv), dtype=torch.float32, device=self.device)
+        self.foot_pos = torch.zeros((6, self.nenv), dtype=torch.float32, device=self.device)
+        self.foot_vel = torch.zeros((6, self.nenv), dtype=torch.float32, device=self.device)
+        self.contact_forces = torch.zeros((8, self.nenv), dtype=torch.float32, device=self.device)
         
         # RL specific states
         self.commands = torch.zeros((3, self.nenv), dtype=torch.float32, device=self.device)
@@ -113,6 +113,9 @@ class G1Sim:
             self.qvel.data_ptr(),
             self.anchor.data_ptr(),
             self.ctrl.data_ptr(),
+            self.foot_pos.data_ptr(),
+            self.foot_vel.data_ptr(),
+            self.contact_forces.data_ptr(),
             stream
         )
 

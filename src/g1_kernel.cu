@@ -107,7 +107,10 @@ __global__ void g1_step_kernel(int nenv, int nsub, G1Config cfg,
                                G1Real* __restrict__ qpos,
                                G1Real* __restrict__ qvel,
                                G1Real* __restrict__ anchor,
-                               const G1Real* __restrict__ ctrl) {
+                               const G1Real* __restrict__ ctrl,
+                               G1Real* __restrict__ foot_pos,
+                               G1Real* __restrict__ foot_vel,
+                               G1Real* __restrict__ contact_forces) {
   int e = int(blockIdx.x * blockDim.x + threadIdx.x);
   if (e >= nenv) return;
   G1Real qp[G1_NQ], qv[G1_NV], ct[G1_NU], an[2 * G1_NC];
@@ -116,21 +119,46 @@ __global__ void g1_step_kernel(int nenv, int nsub, G1Config cfg,
   for (int i = 0; i < G1_NU; ++i)     ct[i] = ctrl[(size_t)i * nenv + e];
   for (int i = 0; i < 2 * G1_NC; ++i) an[i] = anchor[(size_t)i * nenv + e];
   G1Ws w;
-  for (int s = 0; s < nsub; ++s) g1_step(cfg, qp, qv, ct, an, w);
+  G1Real fn[G1_NC];
+  for (int s = 0; s < nsub; ++s) g1_step(cfg, qp, qv, ct, an, w, (s == nsub - 1) ? fn : nullptr);
   for (int i = 0; i < G1_NQ; ++i)     qpos[(size_t)i * nenv + e] = qp[i];
   for (int i = 0; i < G1_NV; ++i)     qvel[(size_t)i * nenv + e] = qv[i];
   for (int i = 0; i < 2 * G1_NC; ++i) anchor[(size_t)i * nenv + e] = an[i];
+  
+  if (foot_pos) {
+    foot_pos[0 * nenv + e] = w.oP[6].x;
+    foot_pos[1 * nenv + e] = w.oP[6].y;
+    foot_pos[2 * nenv + e] = w.oP[6].z;
+    foot_pos[3 * nenv + e] = w.oP[12].x;
+    foot_pos[4 * nenv + e] = w.oP[12].y;
+    foot_pos[5 * nenv + e] = w.oP[12].z;
+  }
+  if (foot_vel) {
+    V3 vl = mul(w.oR[6], w.v[6].l);
+    foot_vel[0 * nenv + e] = vl.x;
+    foot_vel[1 * nenv + e] = vl.y;
+    foot_vel[2 * nenv + e] = vl.z;
+    V3 vr = mul(w.oR[12], w.v[12].l);
+    foot_vel[3 * nenv + e] = vr.x;
+    foot_vel[4 * nenv + e] = vr.y;
+    foot_vel[5 * nenv + e] = vr.z;
+  }
+  if (contact_forces) {
+    for (int k = 0; k < G1_NC; ++k) {
+      contact_forces[k * nenv + e] = fn[k];
+    }
+  }
 }
 
 extern "C" {
-  void g1_cuda_step(int nenv, int nsub, G1Real* qpos, G1Real* qvel, G1Real* anchor, const G1Real* ctrl, cudaStream_t stream) {
+  void g1_cuda_step(int nenv, int nsub, G1Real* qpos, G1Real* qvel, G1Real* anchor, const G1Real* ctrl, G1Real* foot_pos, G1Real* foot_vel, G1Real* contact_forces, cudaStream_t stream) {
     int tpb = 128;
     int nblocks = (nenv + tpb - 1) / tpb;
     G1Config cfg = g1_default_config();
 #ifdef FAKE_CUDA
-    g1_step_kernel(nenv, nsub, cfg, qpos, qvel, anchor, ctrl);
+    g1_step_kernel(nenv, nsub, cfg, qpos, qvel, anchor, ctrl, foot_pos, foot_vel, contact_forces);
 #else
-    g1_step_kernel<<<nblocks, tpb, 0, stream>>>(nenv, nsub, cfg, qpos, qvel, anchor, ctrl);
+    g1_step_kernel<<<nblocks, tpb, 0, stream>>>(nenv, nsub, cfg, qpos, qvel, anchor, ctrl, foot_pos, foot_vel, contact_forces);
 #endif
   }
 
@@ -184,7 +212,7 @@ int main(int argc, char** argv) {
     G1Real* h = (G1Real*)malloc(nq * sizeof(G1Real));
     for (int s = 0; s < nsteps; ++s) {
       G1_LAUNCH(g1_step_kernel, nblocks, tpb, nenv, nsub, cfg, qpos, qvel,
-                anchor, ctrl);
+                anchor, ctrl, nullptr, nullptr, nullptr);
       CUDA_CHECK(cudaDeviceSynchronize());
       CUDA_CHECK(cudaMemcpy(h, qpos, nq * sizeof(G1Real),
                             cudaMemcpyDeviceToHost));
@@ -197,12 +225,12 @@ int main(int argc, char** argv) {
 
   // warmup, then timed loop
   G1_LAUNCH(g1_step_kernel, nblocks, tpb, nenv, nsub, cfg, qpos, qvel,
-            anchor, ctrl);
+            anchor, ctrl, nullptr, nullptr, nullptr);
   CUDA_CHECK(cudaDeviceSynchronize());
   auto t0 = std::chrono::high_resolution_clock::now();
   for (int s = 0; s < nsteps; ++s)
     G1_LAUNCH(g1_step_kernel, nblocks, tpb, nenv, nsub, cfg, qpos, qvel,
-              anchor, ctrl);
+              anchor, ctrl, nullptr, nullptr, nullptr);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
   auto t1 = std::chrono::high_resolution_clock::now();

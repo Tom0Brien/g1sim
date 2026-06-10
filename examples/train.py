@@ -19,9 +19,9 @@ class ActorCritic(nn.Module):
         
         # Policy (Actor)
         self.actor = nn.Sequential(
-            nn.Linear(num_obs, 256),
+            nn.Linear(num_obs, 512),
             nn.ELU(),
-            nn.Linear(256, 256),
+            nn.Linear(512, 256),
             nn.ELU(),
             nn.Linear(256, 128),
             nn.ELU(),
@@ -30,9 +30,9 @@ class ActorCritic(nn.Module):
         
         # Value Function (Critic)
         self.critic = nn.Sequential(
-            nn.Linear(num_obs, 256),
+            nn.Linear(num_obs, 512),
             nn.ELU(),
-            nn.Linear(256, 256),
+            nn.Linear(512, 256),
             nn.ELU(),
             nn.Linear(256, 128),
             nn.ELU(),
@@ -150,15 +150,32 @@ def compute_reward_and_done(env, obs):
     out_of_bounds = ((current_joint_pos < env.joint_pos_lower) | (current_joint_pos > env.joint_pos_upper)).float()
     rew_dof_limits = torch.sum(out_of_bounds, dim=0)
     
-    # 4. Combine (weights match mjlab/tasks/velocity/velocity_env_cfg.py)
+    # 4. Foot Rewards (using CUDA kinematics)
+    left_z = env.foot_pos[2, :]
+    right_z = env.foot_pos[5, :]
+    left_vel_xy_sq = torch.square(env.foot_vel[0, :]) + torch.square(env.foot_vel[1, :])
+    right_vel_xy_sq = torch.square(env.foot_vel[3, :]) + torch.square(env.foot_vel[4, :])
+    left_vel_xy_norm = torch.sqrt(left_vel_xy_sq + 1e-6)
+    right_vel_xy_norm = torch.sqrt(right_vel_xy_sq + 1e-6)
+    
+    cmd_active = (total_speed > 0.05).float()
+    rew_foot_clearance = (torch.abs(left_z - 0.1) * left_vel_xy_norm + torch.abs(right_z - 0.1) * right_vel_xy_norm) * cmd_active
+    
+    left_contact = (torch.sum(env.contact_forces[0:4, :], dim=0) > 1.0).float()
+    right_contact = (torch.sum(env.contact_forces[4:8, :], dim=0) > 1.0).float()
+    rew_foot_slip = (left_vel_xy_sq * left_contact + right_vel_xy_sq * right_contact) * cmd_active
+    
+    # 5. Combine (full mjlab suite)
     reward = (
         2.0 * rew_lin_vel + 
         2.0 * rew_ang_vel + 
         1.0 * rew_orient +
         1.0 * rew_pose -
         1.0 * rew_dof_limits -
-        0.1 * rew_action_rate - 
-        0.001 * rew_joint_vel
+        2.0 * rew_foot_clearance -
+        0.1 * rew_foot_slip -
+        0.1 * rew_action_rate -
+        0.001 * rew_joint_vel 
     )
     
     # 4. Termination (Base height < 0.45 or > 1.0)
@@ -191,8 +208,8 @@ def train():
     mini_batch_size = batch_size // 4
     clip_param = 0.2
     max_grad_norm = 1.0
-    lr = 3e-4
-    iterations = 1000
+    lr = 1e-3            # Matched mjlab
+    iterations = 30000   # Matched mjlab
     
     env = G1Sim(nenv=num_envs, device=device)
     
@@ -295,12 +312,19 @@ def train():
         fps = (num_envs * num_steps) / (t1 - t0)
         
         print(f"Iter: {it:03d} | Reward: {total_reward/num_steps:.3f} | FPS: {fps:.0f}")
+        
+        # Periodic saving
+        if (it + 1) % 100 == 0:
+            os.makedirs(os.path.join(HERE, "..", "build"), exist_ok=True)
+            save_path = os.path.join(HERE, "..", "build", "policy.pt")
+            torch.save(ac.state_dict(), save_path)
+            print(f"Saved intermediate policy to {save_path}")
 
-    # Save policy
+    # Final Save policy
     os.makedirs(os.path.join(HERE, "..", "build"), exist_ok=True)
     save_path = os.path.join(HERE, "..", "build", "policy.pt")
     torch.save(ac.state_dict(), save_path)
-    print(f"Saved policy to {save_path}")
+    print(f"Saved final policy to {save_path}")
 
 if __name__ == "__main__":
     train()

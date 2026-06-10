@@ -31,7 +31,7 @@ def play():
     env.reset_all(noise=0.0)
     
     # Set command (forward walking)
-    env.commands[0, 0] = 0.5
+    env.commands[0, 0] = 0.0
     env.commands[1, 0] = 0.0
     env.commands[2, 0] = 0.0
     
@@ -47,14 +47,43 @@ def play():
     nsub = 10
     control_dt = 2e-3 * nsub  # 20ms policy step
     
-    print("Launching viewer. Press Space to pause, R to reset.")
+    print("Launching viewer.")
+    print("Controls:")
+    print("  Space: Pause/Unpause")
+    print("  R: Reset Environment")
+    print("  W/S: Increase/Decrease Forward Velocity (Vx)")
+    print("  A/D: Increase/Decrease Lateral Velocity (Vy)")
+    print("  Q/E: Increase/Decrease Yaw Velocity (Wz)")
     
     paused = [False]
     def key_callback(keycode):
+        try:
+            char = chr(keycode).upper()
+        except ValueError:
+            char = ''
+            
         if keycode == ord(' '):
             paused[0] = not paused[0]
-        elif keycode == ord('R') or keycode == ord('r'):
+        elif char == 'R':
             env.reset_all(noise=0.0)
+            env.commands[0, 0] = 0.0
+            env.commands[1, 0] = 0.0
+            env.commands[2, 0] = 0.0
+        elif char == 'W':
+            env.commands[0, 0] = torch.clamp(env.commands[0, 0] + 0.1, -1.0, 2.0)
+        elif char == 'S':
+            env.commands[0, 0] = torch.clamp(env.commands[0, 0] - 0.1, -1.0, 2.0)
+        elif char == 'A':
+            env.commands[1, 0] = torch.clamp(env.commands[1, 0] + 0.1, -1.0, 1.0)
+        elif char == 'D':
+            env.commands[1, 0] = torch.clamp(env.commands[1, 0] - 0.1, -1.0, 1.0)
+        elif char == 'Q':
+            env.commands[2, 0] = torch.clamp(env.commands[2, 0] + 0.2, -1.0, 1.0)
+        elif char == 'E':
+            env.commands[2, 0] = torch.clamp(env.commands[2, 0] - 0.2, -1.0, 1.0)
+            
+        if char in ['R', 'W', 'S', 'A', 'D', 'Q', 'E']:
+            print(f"Command -> Vx: {env.commands[0, 0].item():.1f}, Vy: {env.commands[1, 0].item():.1f}, Wz: {env.commands[2, 0].item():.1f}")
 
     with mujoco.viewer.launch_passive(m, d, key_callback=key_callback) as viewer:
         while viewer.is_running():
