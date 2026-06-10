@@ -37,13 +37,6 @@
     <geom name="floor" type="plane" size="6 6 0.05"
       material="floor_mat" contype="1" conaffinity="1"/>
 
-    <!-- decorative ring around the robot (non-colliding) -->
-    <geom name="ring" type="cylinder" size="1.2 0.003"
-      pos="0 0 0.001" material="accent"
-      contype="0" conaffinity="0" group="2"/>
-
-    <!-- ── three-point lighting rig ─────────────────────────────────── -->
-
     <!-- key light: warm, from front-right above -->
     <light name="key" pos="2 -2 4" dir="-0.4 0.4 -0.8"
       diffuse="0.65 0.60 0.55" specular="0.8 0.75 0.7"
