@@ -74,3 +74,18 @@ def test_g1sim_selective_reset(device):
     # Environment 1 should be reset (base height roughly 0.79 + 1.0 drop = 1.79)
     assert not torch.allclose(env.qpos[:, 1], qpos_stepped[:, 1])
     assert torch.allclose(env.qpos[2, 1], torch.tensor(1.79, device=device), atol=0.05)
+
+def test_g1sim_get_obs(device):
+    env = G1Sim(nenv=5, device=device)
+    env.reset_all(noise=0.0, drop=0.0)
+    
+    # Check output shape
+    obs = env.get_obs()
+    assert obs.shape == (5, 99)
+    
+    # On reset, gravity is straight down, robot should be perfectly upright
+    # The projected gravity should be roughly [0, 0, -1]
+    assert torch.allclose(obs[:, 3:6], torch.tensor([0.0, 0.0, -1.0], device=device).expand(5, 3), atol=1e-5)
+    
+    # On reset, the joint position error (indices 12:41) should be 0 
+    assert torch.allclose(obs[:, 12:41], torch.zeros(5, 29, device=device), atol=1e-5)

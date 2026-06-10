@@ -1,6 +1,7 @@
 import ctypes
 import os
 import torch
+import mujoco
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB_PATH = os.path.join(HERE, "..", "build", "libg1cuda.so")
@@ -51,8 +52,19 @@ class G1Sim:
         self.anchor = torch.full((2 * self.NC, self.nenv), 1e30, dtype=torch.float32, device=self.device)
         self.ctrl = torch.zeros((self.NU, self.nenv), dtype=torch.float32, device=self.device)
         
+        # RL specific states
+        self.commands = torch.zeros((3, self.nenv), dtype=torch.float32, device=self.device)
+        self.last_actions = torch.zeros((self.NU, self.nenv), dtype=torch.float32, device=self.device)
+        
         # Helper mask
         self.done = torch.ones(self.nenv, dtype=torch.uint8, device=self.device)
+        
+        # Nominal stand pose from XML
+        m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "..", "model", "g1_stripped.xml"))
+        self.default_qpos = torch.tensor(m.key_qpos[0], dtype=torch.float32, device=self.device).unsqueeze(1)
+        self.default_joint_pos = self.default_qpos[7:36]
+        self.global_gravity = torch.zeros((3, self.nenv), dtype=torch.float32, device=self.device)
+        self.global_gravity[2, :] = -1.0
         
     def reset_done(self, done: torch.Tensor, seed: int = 42, noise: float = 0.05, drop: float = 0.02):
         """Resets environments where done is True/1."""
@@ -85,6 +97,8 @@ class G1Sim:
         assert self.ctrl.is_contiguous()
         assert self.qpos.is_contiguous()
         
+        self.last_actions.copy_(self.ctrl)
+        
         stream = torch.cuda.current_stream(self.device).cuda_stream
         
         lib.g1_cuda_step(
@@ -96,3 +110,43 @@ class G1Sim:
             self.ctrl.data_ptr(),
             stream
         )
+
+    def get_obs(self) -> torch.Tensor:
+        """
+        Computes the RL observation space:
+        1. Commands (3)
+        2. Projected gravity (3)
+        3. Base linear velocity (3)
+        4. Base angular velocity (3)
+        5. Joint position error (29)
+        6. Joint velocities (29)
+        7. Previous actions (29)
+        Returns: (nenv, 99)
+        """
+        # Base quaternion q = [w, x, y, z]
+        q = self.qpos[3:7, :]
+        qw, qx, qy, qz = q[0], q[1], q[2], q[3]
+        
+        # Inverse vector part
+        q_vec_inv = torch.stack([-qx, -qy, -qz], dim=0)
+        
+        def quat_rotate_inverse(v):
+            uv = torch.cross(q_vec_inv, v, dim=0)
+            uuv = torch.cross(q_vec_inv, uv, dim=0)
+            return v + 2.0 * (qw * uv + uuv)
+            
+        proj_gravity = quat_rotate_inverse(self.global_gravity)
+        base_lin_vel = quat_rotate_inverse(self.qvel[0:3, :])
+        
+        # Assemble observation (dim, nenv) -> (nenv, dim)
+        obs = torch.cat([
+            self.commands,                     # 3
+            proj_gravity,                      # 3
+            base_lin_vel,                      # 3
+            self.qvel[3:6, :],                 # 3
+            self.qpos[7:36, :] - self.default_joint_pos,  # 29
+            self.qvel[6:35, :],                # 29
+            self.last_actions                  # 29
+        ], dim=0).T
+        
+        return obs
