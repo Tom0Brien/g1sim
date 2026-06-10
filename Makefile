@@ -27,6 +27,8 @@ cpu-kernel: build
 gpu: build
 	$(NVCC) -O3 -arch=$(ARCH) --expt-relaxed-constexpr -use_fast_math \
 	  -std=c++17 -Isrc src/g1_kernel.cu -o build/g1bench
+	$(NVCC) -O3 -arch=$(ARCH) --expt-relaxed-constexpr -use_fast_math \
+	  -std=c++17 -Xcompiler -fPIC -shared -Isrc src/g1_kernel.cu -o build/libg1cuda.so
 
 # Regenerate src/g1_model.h + model/g1_stripped.xml from the menagerie MJCF
 model:

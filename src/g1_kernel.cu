@@ -82,6 +82,26 @@ __global__ void g1_reset_kernel(int nenv, G1Real* qpos, G1Real* qvel,
     anchor[(size_t)i * nenv + e] = G1_ANCHOR_FREE;
 }
 
+__global__ void g1_reset_done_kernel(int nenv, G1Real* qpos, G1Real* qvel,
+                                     G1Real* anchor, const uint8_t* done,
+                                     unsigned seed, G1Real noise,
+                                     G1Real drop) {
+  int e = int(blockIdx.x * blockDim.x + threadIdx.x);
+  if (e >= nenv) return;
+  if (!done[e]) return;
+
+  unsigned s = g1_hash(seed ^ (unsigned)(e + 1));
+  for (int i = 0; i < G1_NQ; ++i) {
+    G1Real v = G1Real(g1_qpos_stand[i]);
+    if (i == 2) v += drop;
+    if (i >= 7) v += noise * (2 * g1_urand(s) - 1);
+    qpos[(size_t)i * nenv + e] = v;
+  }
+  for (int i = 0; i < G1_NV; ++i) qvel[(size_t)i * nenv + e] = 0;
+  for (int i = 0; i < 2 * G1_NC; ++i)
+    anchor[(size_t)i * nenv + e] = G1_ANCHOR_FREE;
+}
+
 // nsub physics substeps per launch. ctrl holds PD position targets.
 __global__ void g1_step_kernel(int nenv, int nsub, G1Config cfg,
                                G1Real* __restrict__ qpos,
@@ -100,6 +120,29 @@ __global__ void g1_step_kernel(int nenv, int nsub, G1Config cfg,
   for (int i = 0; i < G1_NQ; ++i)     qpos[(size_t)i * nenv + e] = qp[i];
   for (int i = 0; i < G1_NV; ++i)     qvel[(size_t)i * nenv + e] = qv[i];
   for (int i = 0; i < 2 * G1_NC; ++i) anchor[(size_t)i * nenv + e] = an[i];
+}
+
+extern "C" {
+  void g1_cuda_step(int nenv, int nsub, G1Real* qpos, G1Real* qvel, G1Real* anchor, const G1Real* ctrl, cudaStream_t stream) {
+    int tpb = 128;
+    int nblocks = (nenv + tpb - 1) / tpb;
+    G1Config cfg = g1_default_config();
+#ifdef FAKE_CUDA
+    g1_step_kernel(nenv, nsub, cfg, qpos, qvel, anchor, ctrl);
+#else
+    g1_step_kernel<<<nblocks, tpb, 0, stream>>>(nenv, nsub, cfg, qpos, qvel, anchor, ctrl);
+#endif
+  }
+
+  void g1_cuda_reset_done(int nenv, G1Real* qpos, G1Real* qvel, G1Real* anchor, const uint8_t* done, unsigned seed, G1Real noise, G1Real drop, cudaStream_t stream) {
+    int tpb = 128;
+    int nblocks = (nenv + tpb - 1) / tpb;
+#ifdef FAKE_CUDA
+    g1_reset_done_kernel(nenv, qpos, qvel, anchor, done, seed, noise, drop);
+#else
+    g1_reset_done_kernel<<<nblocks, tpb, 0, stream>>>(nenv, qpos, qvel, anchor, done, seed, noise, drop);
+#endif
+  }
 }
 
 // -------------------------------------------------------------- benchmark
