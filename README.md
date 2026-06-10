@@ -24,14 +24,24 @@ tests/                   Validation suite vs MuJoCo
 
 ## Build & Run
 
-Ensure you have a C++ compiler (`g++`, `clang++`, or `cl.exe`) and Python installed.
+Ensure you have a C++ compiler (`g++` or `clang++`), the CUDA Toolkit (`nvcc`), and [uv](https://docs.astral.sh/uv/) installed.
 
+Initialize the Python environment and dependencies:
 ```bash
-make            # host lib (double) + kernel via CPU shim (float)
-make test       # full validation (needs: pip install mujoco)
-make bench-cpu  # kernel benchmark through the CPU shim
-make gpu        # real CUDA build: nvcc --expt-relaxed-constexpr, ARCH=sm_80
-make model      # regenerate g1_model.h from model/g1_raw.xml
+uv sync --extra dev
+```
+
+Build the simulator and run tests:
+```bash
+make              # host lib (double) + kernel via CPU shim (float)
+uv run make test  # full validation against MuJoCo oracle
+make bench-cpu    # CPU kernel benchmark
+make gpu          # real CUDA build: nvcc --expt-relaxed-constexpr
+```
+
+To benchmark the CUDA implementation against `mujoco_warp`:
+```bash
+uv run python tests/benchmark_warp.py
 ```
 
 ## Performance & Benchmarks

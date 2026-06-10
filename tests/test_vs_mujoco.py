@@ -15,10 +15,7 @@ import numpy as np
 import mujoco, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-if sys.platform == "win32":
-    lib = C.CDLL(os.path.join(HERE, "..", "build", "libg1host.dll"))
-else:
-    lib = C.CDLL(os.path.join(HERE, "..", "build", "libg1host.so"))
+lib = C.CDLL(os.path.join(HERE, "..", "build", "libg1host.so"))
 D = np.float64
 P = lambda a: a.ctypes.data_as(C.POINTER(C.c_double))
 

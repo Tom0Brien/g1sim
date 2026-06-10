@@ -20,10 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 
 # ── load host library ───────────────────────────────────────────────────
-if sys.platform == "win32":
-    lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.dll"))
-else:
-    lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.so"))
+lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.so"))
 
 D = np.float64
 P = lambda a: a.ctypes.data_as(C.POINTER(C.c_double))

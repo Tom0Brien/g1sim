@@ -5,15 +5,12 @@ import ctypes as C, numpy as np, subprocess, os, sys, mujoco
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
-if sys.platform == "win32":
-    lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.dll"))
-else:
-    lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.so"))
+lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.so"))
 P = lambda a: a.ctypes.data_as(C.POINTER(C.c_double))
 m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "..", "model", "g1_stripped.xml"))
 NQ, NV, NU, NC = m.nq, m.nv, m.nu, 8
 
-exe_name = "g1bench_cpu.exe" if sys.platform == "win32" else "g1bench_cpu"
+exe_name = "g1bench_cpu"
 out = subprocess.run([os.path.join(ROOT, "build", exe_name),
                       "--dump", "--steps", "500"],
                      capture_output=True, text=True, check=True).stdout

@@ -4,13 +4,8 @@ CXX  ?= g++
 NVCC ?= nvcc
 PYTHON ?= python
 
-ifeq ($(OS),Windows_NT)
-  HOSTLIB_OUT = build/libg1host.dll
-  CPU_KERNEL_OUT = build/g1bench_cpu.exe
-else
-  HOSTLIB_OUT = build/libg1host.so
-  CPU_KERNEL_OUT = build/g1bench_cpu
-endif
+HOSTLIB_OUT = build/libg1host.so
+CPU_KERNEL_OUT = build/g1bench_cpu
 
 all: hostlib cpu-kernel
 
