@@ -34,14 +34,22 @@ make gpu        # real CUDA build: nvcc --expt-relaxed-constexpr, ARCH=sm_80
 make model      # regenerate g1_model.h from model/g1_raw.xml
 ```
 
-## Performance & Optimizations
+## Performance & Benchmarks
 
 This simulator has been heavily optimized for massively parallel GPU execution:
 - **Packed Symmetric Inertias:** Uses a 21-float packed symmetric matrix and closed-form spatial inertia congruence transforms, slashing dominant FLOPs by ~2x.
 - **Minimized Thread State:** Per-thread local memory (`G1Ws`) has been shrunk by ~27%, drastically reducing register spilling on GPUs and improving warp occupancy.
 - **Loop Fusion:** PD control, contact modeling, and the Featherstone Articulated Body Algorithm (ABA) are fused into a single tight loop to maximize register locality and minimize memory trips.
 
-*Reference throughput:* **~925,000 env-steps/s** on a single CPU core (via the CPU shim). Actual CUDA hardware will be orders of magnitude faster.
+### Hardware & Throughput
+
+Benchmarked on a laptop with an **NVIDIA GeForce RTX 3080 Laptop GPU (16 GiB)** and an **x86_64** CPU, simulating a batch of 16,384 environments for 250 steps (dt=2e-3):
+
+- **g1sim CPU shim (single core):** ~1.27 million env-steps/s
+- **g1sim CUDA GPU:** ~12.8 million env-steps/s
+- **mujoco_warp GPU (reference):** ~1.08 million env-steps/s
+
+By stripping away the generalized constraint solver and broadphase layers, the specialized CUDA kernel runs nearly **12x faster** than the generalized `mujoco_warp` equivalent on the same model and hardware.
 
 ## Validation Status
 

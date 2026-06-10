@@ -7,9 +7,12 @@
   #define G1_FN inline
 #endif
 
-// Model constants live in headers as constexpr arrays. Device code reads them
-// directly (compile with: nvcc --expt-relaxed-constexpr).
-#define G1_MODEL_CONST static constexpr
+// Model constants live in headers as constexpr arrays.
+#if defined(__CUDACC__)
+  #define G1_MODEL_CONST __constant__
+#else
+  #define G1_MODEL_CONST static constexpr
+#endif
 
 // Precision: 8 = double (validation vs MuJoCo oracle), 4 = float (GPU speed).
 #ifndef G1_PRECISION
