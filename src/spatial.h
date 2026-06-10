@@ -118,100 +118,161 @@ G1_FN SV cross_force(SV v, SV f) {
 }
 
 // ------------------------------------------------------- 6x6 (articulated)
-struct M6 { G1Real m[36]; };                     // row-major, symmetric use
-G1_FN void m6_zero(M6& A) { for (int i = 0; i < 36; ++i) A.m[i] = 0; }
-G1_FN SV m6_mul(const M6& A, SV u) {
+struct M6Sym { G1Real m[21]; };                     // lower-triangular packed
+
+G1_FN void m6_zero(M6Sym& A) { for (int i = 0; i < 21; ++i) A.m[i] = 0; }
+
+G1_FN SV m6_mul(const M6Sym& A, SV u) {
   G1Real x[6] = {u.a.x, u.a.y, u.a.z, u.l.x, u.l.y, u.l.z};
-  G1Real y[6];
+  G1Real y[6] = {0,0,0,0,0,0};
+  int idx = 0;
   for (int i = 0; i < 6; ++i) {
-    G1Real s = 0;
-    for (int j = 0; j < 6; ++j) s += A.m[6*i+j] * x[j];
-    y[i] = s;
+    for (int j = 0; j < i; ++j) {
+      G1Real A_ij = A.m[idx++];
+      y[i] += A_ij * x[j];
+      y[j] += A_ij * x[i];
+    }
+    y[i] += A.m[idx++] * x[i]; // j == i
   }
   return sv(v3(y[0], y[1], y[2]), v3(y[3], y[4], y[5]));
 }
+
 // A -= (U U^T) / d
-G1_FN void m6_sub_outer(M6& A, SV U, G1Real inv_d) {
+G1_FN void m6_sub_outer(M6Sym& A, SV U, G1Real inv_d) {
   G1Real u[6] = {U.a.x, U.a.y, U.a.z, U.l.x, U.l.y, U.l.z};
-  for (int i = 0; i < 6; ++i)
-    for (int j = 0; j < 6; ++j)
-      A.m[6*i+j] -= u[i] * u[j] * inv_d;
+  int idx = 0;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j <= i; ++j) {
+      A.m[idx++] -= u[i] * u[j] * inv_d;
+    }
+  }
 }
-// Rigid-body spatial inertia about the body-frame origin from
-// (mass m, COM c, rotational inertia about COM Icom, body axes):
-//   [ Icom - m [c]x [c]x ,  m [c]x ]
-//   [      -m [c]x       ,  m 1    ]
-G1_FN M6 spatial_inertia(G1Real mass, V3 c, const G1Real Icom[9]) {
-  M6 I; m6_zero(I);
+
+// Rigid-body spatial inertia about the body-frame origin
+G1_FN M6Sym spatial_inertia(G1Real mass, V3 c, const G1Real Icom[9]) {
+  M6Sym I;
   G1Real cx[9] = {0, -c.z, c.y,  c.z, 0, -c.x,  -c.y, c.x, 0};
-  // top-left: Icom - m cx cx
-  for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 3; ++j) {
-      G1Real s = 0;
-      for (int k = 0; k < 3; ++k) s += cx[3*i+k] * cx[3*k+j];
-      I.m[6*i+j] = Icom[3*i+j] - mass * s;
+  int idx = 0;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j <= i; ++j) {
+      G1Real val = 0;
+      if (i < 3 && j < 3) {
+        G1Real s = 0;
+        for (int k = 0; k < 3; ++k) s += cx[3*i+k] * cx[3*k+j];
+        val = Icom[3*i+j] - mass * s;
+      } else if (i >= 3 && j < 3) {
+        val = -mass * cx[3*(i-3) + j];
+      } else {
+        val = (i == j) ? mass : G1Real(0);
+      }
+      I.m[idx++] = val;
     }
-  // top-right m cx, bottom-left -m cx, bottom-right m
-  for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 3; ++j) {
-      I.m[6*i + (j+3)]     =  mass * cx[3*i+j];
-      I.m[6*(i+3) + j]     = -mass * cx[3*i+j];
-      I.m[6*(i+3) + (j+3)] = (i == j) ? mass : G1Real(0);
-    }
+  }
   return I;
 }
-// Transform articulated inertia from child frame i to parent frame A, given
-// X = liMi (pose of i in A):  I_A += Xm^T I_i Xm,  Xm = motion map A -> i:
-//   Xm = [ R^T        , 0   ]
-//        [ -R^T [p]x  , R^T ]
-G1_FN void m6_psum_transform(M6& IA_parent, const M6& Ii, const SE3& X) {
-  G1Real Xm[36];
-  const G1Real* R = X.R.m;
-  G1Real px[9] = {0, -X.p.z, X.p.y,  X.p.z, 0, -X.p.x,  -X.p.y, X.p.x, 0};
-  for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 3; ++j) {
-      Xm[6*i+j]         = R[3*j+i];             // R^T
-      Xm[6*i+(j+3)]     = 0;
-      G1Real s = 0;                              // -R^T px
-      for (int k = 0; k < 3; ++k) s += R[3*k+i] * px[3*k+j];
-      Xm[6*(i+3)+j]     = -s;
-      Xm[6*(i+3)+(j+3)] = R[3*j+i];
-    }
-  G1Real T[36];                                  // T = I_i * Xm
-  for (int i = 0; i < 6; ++i)
-    for (int j = 0; j < 6; ++j) {
-      G1Real s = 0;
-      for (int k = 0; k < 6; ++k) s += Ii.m[6*i+k] * Xm[6*k+j];
-      T[6*i+j] = s;
-    }
-  for (int i = 0; i < 6; ++i)                    // += Xm^T * T
-    for (int j = 0; j < 6; ++j) {
-      G1Real s = 0;
-      for (int k = 0; k < 6; ++k) s += Xm[6*k+i] * T[6*k+j];
-      IA_parent.m[6*i+j] += s;
-    }
+
+G1_FN M3 m6_sym_get_J(const M6Sym& I) {
+  return {I.m[0], I.m[1], I.m[3],
+          I.m[1], I.m[2], I.m[4],
+          I.m[3], I.m[4], I.m[5]};
 }
+G1_FN M3 m6_sym_get_H(const M6Sym& I) {
+  return {I.m[6], I.m[10], I.m[15],
+          I.m[7], I.m[11], I.m[16],
+          I.m[8], I.m[12], I.m[17]};
+}
+G1_FN M3 m6_sym_get_M(const M6Sym& I) {
+  return {I.m[9],  I.m[13], I.m[18],
+          I.m[13], I.m[14], I.m[19],
+          I.m[18], I.m[19], I.m[20]};
+}
+
+G1_FN M3 matmul_ABT(const M3& A, const M3& B) {
+  M3 C;
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      C.m[3*i+j] = A.m[3*i+0]*B.m[3*j+0] + A.m[3*i+1]*B.m[3*j+1] + A.m[3*i+2]*B.m[3*j+2];
+  return C;
+}
+
+G1_FN M3 px_mul(V3 p, const M3& A) {
+  M3 C;
+  for (int j=0; j<3; ++j) {
+    C.m[0*3+j] = -p.z * A.m[1*3+j] + p.y * A.m[2*3+j];
+    C.m[1*3+j] =  p.z * A.m[0*3+j] - p.x * A.m[2*3+j];
+    C.m[2*3+j] = -p.y * A.m[0*3+j] + p.x * A.m[1*3+j];
+  }
+  return C;
+}
+
+G1_FN M3 mul_px(const M3& A, V3 p) {
+  M3 C;
+  for (int i=0; i<3; ++i) {
+    C.m[i*3+0] =  A.m[i*3+1] * p.z - A.m[i*3+2] * p.y;
+    C.m[i*3+1] = -A.m[i*3+0] * p.z + A.m[i*3+2] * p.x;
+    C.m[i*3+2] =  A.m[i*3+0] * p.y - A.m[i*3+1] * p.x;
+  }
+  return C;
+}
+
+// Transform articulated inertia from child frame i to parent frame A
+G1_FN void m6_psum_transform(M6Sym& IA_parent, const M6Sym& Ii, const SE3& X) {
+  M3 Ji = m6_sym_get_J(Ii);
+  M3 Hi = m6_sym_get_H(Ii);
+  M3 Mi = m6_sym_get_M(Ii);
+  
+  M3 tJ = matmul_ABT(matmul(X.R, Ji), X.R);
+  M3 tH = matmul_ABT(matmul(X.R, Hi), X.R);
+  M3 tM = matmul_ABT(matmul(X.R, Mi), X.R);
+  
+  M3 px_tM = px_mul(X.p, tM);
+  M3 HA;
+  for (int i=0; i<9; ++i) HA.m[i] = tH.m[i] + px_tM.m[i];
+  
+  M3 tH_T;
+  for(int i=0;i<3;++i) for(int j=0;j<3;++j) tH_T.m[3*i+j] = tH.m[3*j+i];
+  
+  M3 px_tHT = px_mul(X.p, tH_T);
+  M3 HA_px = mul_px(HA, X.p);
+  M3 JA;
+  for (int i=0; i<9; ++i) JA.m[i] = tJ.m[i] + px_tHT.m[i] - HA_px.m[i];
+  
+  IA_parent.m[0] += JA.m[0];
+  IA_parent.m[1] += JA.m[3]; IA_parent.m[2] += JA.m[4];
+  IA_parent.m[3] += JA.m[6]; IA_parent.m[4] += JA.m[7]; IA_parent.m[5] += JA.m[8];
+  
+  IA_parent.m[6] += HA.m[0]; IA_parent.m[7] += HA.m[3]; IA_parent.m[8] += HA.m[6];
+  IA_parent.m[10]+= HA.m[1]; IA_parent.m[11]+= HA.m[4]; IA_parent.m[12]+= HA.m[7];
+  IA_parent.m[15]+= HA.m[2]; IA_parent.m[16]+= HA.m[5]; IA_parent.m[17]+= HA.m[8];
+  
+  IA_parent.m[9] += tM.m[0];
+  IA_parent.m[13]+= tM.m[3]; IA_parent.m[14]+= tM.m[4];
+  IA_parent.m[18]+= tM.m[6]; IA_parent.m[19]+= tM.m[7]; IA_parent.m[20]+= tM.m[8];
+}
+
 // Solve SPD 6x6 system A x = b (in-place Cholesky on a copy).
-G1_FN SV m6_solve(const M6& A, SV b) {
-  G1Real L[36];
-  for (int i = 0; i < 36; ++i) L[i] = A.m[i];
+G1_FN SV m6_solve(const M6Sym& A, SV b) {
+  G1Real L[21];
+  for (int i = 0; i < 21; ++i) L[i] = A.m[i];
   for (int j = 0; j < 6; ++j) {
-    for (int k = 0; k < j; ++k) L[6*j+j] -= L[6*j+k] * L[6*j+k];
-    L[6*j+j] = sqrt(L[6*j+j]);
-    G1Real inv = G1Real(1) / L[6*j+j];
+    int jj = j*(j+1)/2 + j;
+    for (int k = 0; k < j; ++k) L[jj] -= L[j*(j+1)/2 + k] * L[j*(j+1)/2 + k];
+    L[jj] = sqrt(L[jj]);
+    G1Real inv = G1Real(1) / L[jj];
     for (int i = j+1; i < 6; ++i) {
-      for (int k = 0; k < j; ++k) L[6*i+j] -= L[6*i+k] * L[6*j+k];
-      L[6*i+j] *= inv;
+      int ij = i*(i+1)/2 + j;
+      for (int k = 0; k < j; ++k) L[ij] -= L[i*(i+1)/2 + k] * L[j*(j+1)/2 + k];
+      L[ij] *= inv;
     }
   }
   G1Real y[6] = {b.a.x, b.a.y, b.a.z, b.l.x, b.l.y, b.l.z};
   for (int i = 0; i < 6; ++i) {                  // forward
-    for (int k = 0; k < i; ++k) y[i] -= L[6*i+k] * y[k];
-    y[i] /= L[6*i+i];
+    for (int k = 0; k < i; ++k) y[i] -= L[i*(i+1)/2 + k] * y[k];
+    y[i] /= L[i*(i+1)/2 + i];
   }
   for (int i = 5; i >= 0; --i) {                 // backward
-    for (int k = i+1; k < 6; ++k) y[i] -= L[6*k+i] * y[k];
-    y[i] /= L[6*i+i];
+    for (int k = i+1; k < 6; ++k) y[i] -= L[k*(k+1)/2 + i] * y[k];
+    y[i] /= L[i*(i+1)/2 + i];
   }
   return sv(v3(y[0], y[1], y[2]), v3(y[3], y[4], y[5]));
 }

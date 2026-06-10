@@ -29,9 +29,8 @@ void g1_c_fd(const double* qpos, const double* qvel, const double* tau,
   G1Real qp[G1_NQ], qv[G1_NV], tu[G1_NV], qa[G1_NV];
   for (int i = 0; i < G1_NQ; ++i) qp[i] = G1Real(qpos[i]);
   for (int i = 0; i < G1_NV; ++i) { qv[i] = G1Real(qvel[i]); tu[i] = G1Real(tau[i]); }
-  for (int i = 0; i < G1_NB; ++i) w.fext[i] = sv(v3(0,0,0), v3(0,0,0));
   g1_fk_vel(qp, qv, w);
-  g1_aba(cfg, qv, tu, w, qa);
+  g1_aba_pure(cfg, qv, tu, w, qa);
   for (int i = 0; i < G1_NV; ++i) qacc[i] = qa[i];
 }
 

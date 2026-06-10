@@ -15,10 +15,8 @@ struct G1Ws {                // per-environment scratch (thread-local on GPU)
   M3  oR[G1_NB];             // world orientation of body i
   V3  oP[G1_NB];             // world position of body i
   SV  v[G1_NB];              // body-frame twist
-  SV  fext[G1_NB];           // external spatial force, body frame
-  M6  IA[G1_NB];             // articulated inertia
+  M6Sym IA[G1_NB];           // articulated inertia
   SV  pA[G1_NB];             // articulated bias force
-  SV  S[G1_NJ];              // hinge motion subspace
   SV  U[G1_NJ];              // IA * S
   G1Real D[G1_NJ], u[G1_NJ]; // articulated quantities
   SV  a[G1_NB];              // body-frame spatial acceleration
@@ -50,21 +48,78 @@ G1_FN void g1_fk_vel(const G1Real* qpos, const G1Real* qvel, G1Ws& w) {
     w.liMi[i].p = mul(RT, an - mul(RJ, an)) + ld3(g1_tree_pos + 3*i);
     w.oR[i] = matmul(w.oR[par], w.liMi[i].R);
     w.oP[i] = mul(w.oR[par], w.liMi[i].p) + w.oP[par];
-    w.S[h] = sv(ax, cross(an, ax));
-    w.v[i] = motion_act_inv(w.liMi[i], w.v[par]) + qd * w.S[h];
+    SV Sh = sv(ax, cross(an, ax));
+    w.v[i] = motion_act_inv(w.liMi[i], w.v[par]) + qd * Sh;
   }
 }
 
-// ------------------------------------------------------------- contacts
-// Compliant sphere-vs-plane(z=0) at the 8 fixed foot points. Friction is
-// stick-slip: a tangential spring to a per-contact anchor point (2 persistent
-// floats per contact in `anchor`), projected onto the Coulomb cone when
-// slipping (anchor dragged so the spring matches the cone force). This gives
-// true stiction -- no rest creep, unlike purely viscous Coulomb capping.
-// anchor[2k] >= G1_ANCHOR_FREE marks "not in contact".
+// ------------------------------------------------------------- contacts & ABA
+
+// Pure ABA (no contacts, no PD, tau provided directly) for testing against MuJoCo.
+G1_FN void g1_aba_pure(const G1Config& cfg, const G1Real* qvel, const G1Real* tau,
+                       G1Ws& w, G1Real* qacc) {
+  for (int i = 0; i < G1_NB; ++i) {
+    V3 c = ld3(g1_com + 3*i);
+    w.IA[i] = spatial_inertia(g1_mass[i], c, g1_inertia_com + 9*i);
+    V3 gb = mulT(w.oR[i], v3(0, 0, cfg.gravity_z));
+    V3 fg = g1_mass[i] * gb;
+    w.pA[i] = cross_force(w.v[i], m6_mul(w.IA[i], w.v[i])) - sv(cross(c, fg), fg);
+  }
+  {
+    V3 fb = mulT(w.oR[0], ld3(tau));
+    w.pA[0] = w.pA[0] - sv(ld3(tau + 3), fb);
+  }
+  for (int i = G1_NB - 1; i >= 1; --i) {
+    int h = i - 1, par = g1_parent[i];
+    G1Real qd = qvel[6 + h];
+    V3 ax = ld3(g1_jnt_axis + 3*h);
+    V3 an = ld3(g1_jnt_anchor + 3*h);
+    SV Sh = sv(ax, cross(an, ax));
+    w.U[h] = m6_mul(w.IA[i], Sh);
+    w.D[h] = svdot(Sh, w.U[h]) + g1_armature[h];
+    w.u[h] = tau[6 + h] - g1_damping[h] * qd - svdot(Sh, w.pA[i]);
+    G1Real invd = G1Real(1) / w.D[h];
+    SV c = cross_motion(w.v[i], qd * Sh);
+    M6Sym Ia = w.IA[i];
+    m6_sub_outer(Ia, w.U[h], invd);
+    SV pa = w.pA[i] + m6_mul(Ia, c) + (w.u[h] * invd) * w.U[h];
+    m6_psum_transform(w.IA[par], Ia, w.liMi[i]);
+    w.pA[par] = w.pA[par] + force_act(w.liMi[i], pa);
+  }
+  w.a[0] = m6_solve(w.IA[0], sv(v3(0,0,0), v3(0,0,0)) - w.pA[0]);
+  for (int i = 1; i < G1_NB; ++i) {
+    int h = i - 1, par = g1_parent[i];
+    V3 ax = ld3(g1_jnt_axis + 3*h);
+    V3 an = ld3(g1_jnt_anchor + 3*h);
+    SV Sh = sv(ax, cross(an, ax));
+    SV c = cross_motion(w.v[i], qvel[6 + h] * Sh);
+    SV ap = motion_act_inv(w.liMi[i], w.a[par]) + c;
+    G1Real qdd = (w.u[h] - svdot(w.U[h], ap)) / w.D[h];
+    w.a[i] = ap + qdd * Sh;
+    qacc[6 + h] = qdd;
+  }
+  V3 aw = w.a[0].a;
+  V3 al = mul(w.oR[0], w.a[0].l + cross(w.v[0].a, w.v[0].l));
+  qacc[0] = al.x; qacc[1] = al.y; qacc[2] = al.z;
+  qacc[3] = aw.x; qacc[4] = aw.y; qacc[5] = aw.z;
+}
+
+// Fused Contacts, PD control, and ABA backward/forward passes
 #define G1_ANCHOR_FREE G1Real(1e30)
-G1_FN void g1_contacts(const G1Config& cfg, G1Ws& w, G1Real* anchor,
-                       G1Real* fn_out) {
+G1_FN void g1_aba_fused(const G1Config& cfg, const G1Real* qpos, const G1Real* qvel,
+                        const G1Real* ctrl, G1Real* anchor, G1Ws& w,
+                        G1Real* qacc, G1Real* fn_out = nullptr) {
+  // init IA, pA with gravity + Coriolis
+  for (int i = 0; i < G1_NB; ++i) {
+    V3 c = ld3(g1_com + 3*i);
+    w.IA[i] = spatial_inertia(g1_mass[i], c, g1_inertia_com + 9*i);
+    V3 gb = mulT(w.oR[i], v3(0, 0, cfg.gravity_z));        // gravity, body frm
+    V3 fg = g1_mass[i] * gb;
+    SV f = sv(cross(c, fg), fg);
+    w.pA[i] = cross_force(w.v[i], m6_mul(w.IA[i], w.v[i])) - f;
+  }
+  
+  // Contacts
   for (int k = 0; k < G1_NC; ++k) {
     int b = g1_contact_body[k];
     V3 r = ld3(g1_contact_pos + 3*k);
@@ -89,49 +144,40 @@ G1_FN void g1_contacts(const G1Config& cfg, G1Ws& w, G1Real* anchor,
       }
       V3 fw = v3(ftx, fty, fn);
       V3 fb = mulT(w.oR[b], fw);                           // to body frame
-      w.fext[b] = w.fext[b] + sv(cross(r, fb), fb);
+      w.pA[b] = w.pA[b] - sv(cross(r, fb), fb);
     } else {
       anchor[2*k] = G1_ANCHOR_FREE; anchor[2*k+1] = G1_ANCHOR_FREE;
     }
     if (fn_out) fn_out[k] = fn;
   }
-}
 
-// ------------------------------------------------------------------- ABA
-// tau: generalized force (MuJoCo layout; tau[0:6] base wrench dual to qvel).
-// Joint damping is applied internally (tau_h -= damping * qd).
-// Result: qacc in MuJoCo convention.
-// bimp (nullable): per-hinge velocity-feedback coefficient b_h treated
-// IMPLICITLY: solves (M + dt*B) qacc = f(q, v) - B v by folding dt*b_h into
-// the articulated D (exact per-joint backward-Euler damping; unconditionally
-// stable where the explicit update b*dt/m_eff > 2 diverges).
-G1_FN void g1_aba(const G1Config& cfg, const G1Real* qvel, const G1Real* tau,
-                  G1Ws& w, G1Real* qacc, const G1Real* bimp = nullptr) {
-  // init IA, pA with gravity + external forces
-  for (int i = 0; i < G1_NB; ++i) {
-    V3 c = ld3(g1_com + 3*i);
-    w.IA[i] = spatial_inertia(g1_mass[i], c, g1_inertia_com + 9*i);
-    V3 gb = mulT(w.oR[i], v3(0, 0, cfg.gravity_z));        // gravity, body frm
-    V3 fg = g1_mass[i] * gb;
-    SV f = w.fext[i] + sv(cross(c, fg), fg);
-    w.pA[i] = cross_force(w.v[i], m6_mul(w.IA[i], w.v[i])) - f;
-  }
-  // base applied wrench (force world @ base origin, torque body-local)
-  {
-    V3 fb = mulT(w.oR[0], ld3(tau));
-    w.pA[0] = w.pA[0] - sv(ld3(tau + 3), fb);
-  }
   // backward
   for (int i = G1_NB - 1; i >= 1; --i) {
     int h = i - 1, par = g1_parent[i];
     G1Real qd = qvel[6 + h];
-    w.U[h] = m6_mul(w.IA[i], w.S[h]);
-    w.D[h] = svdot(w.S[h], w.U[h]) + g1_armature[h]
-           + (bimp ? cfg.dt * bimp[h] : G1Real(0));
-    w.u[h] = tau[6 + h] - g1_damping[h] * qd - svdot(w.S[h], w.pA[i]);
+    V3 ax = ld3(g1_jnt_axis + 3*h);
+    V3 an = ld3(g1_jnt_anchor + 3*h);
+    SV Sh = sv(ax, cross(an, ax));
+
+    w.U[h] = m6_mul(w.IA[i], Sh);
+    
+    // PD tau and bimp
+    G1Real q = qpos[7 + h];
+    G1Real t = g1_act_kp[h] * (ctrl[h] - q) - g1_act_kv[h] * qd;
+    G1Real lim = g1_act_frclim[h];
+    if (t >  lim) t =  lim;
+    if (t < -lim) t = -lim;
+    G1Real lo = g1_jnt_range[2*h], hi = g1_jnt_range[2*h + 1];
+    G1Real b = g1_act_kv[h] + g1_damping[h];
+    if (q < lo) { t += cfg.limit_kp * (lo - q) - cfg.limit_kd * qd; b += cfg.limit_kd; }
+    if (q > hi) { t += cfg.limit_kp * (hi - q) - cfg.limit_kd * qd; b += cfg.limit_kd; }
+
+    w.D[h] = svdot(Sh, w.U[h]) + g1_armature[h] + cfg.dt * b;
+    w.u[h] = t - g1_damping[h] * qd - svdot(Sh, w.pA[i]);
+    
     G1Real invd = G1Real(1) / w.D[h];
-    SV c = cross_motion(w.v[i], qd * w.S[h]);              // velocity bias
-    M6 Ia = w.IA[i];
+    SV c = cross_motion(w.v[i], qd * Sh);              // velocity bias
+    M6Sym Ia = w.IA[i];
     m6_sub_outer(Ia, w.U[h], invd);
     SV pa = w.pA[i] + m6_mul(Ia, c) + (w.u[h] * invd) * w.U[h];
     m6_psum_transform(w.IA[par], Ia, w.liMi[i]);
@@ -142,41 +188,21 @@ G1_FN void g1_aba(const G1Config& cfg, const G1Real* qvel, const G1Real* tau,
   // forward
   for (int i = 1; i < G1_NB; ++i) {
     int h = i - 1, par = g1_parent[i];
-    SV c = cross_motion(w.v[i], qvel[6 + h] * w.S[h]);
+    V3 ax = ld3(g1_jnt_axis + 3*h);
+    V3 an = ld3(g1_jnt_anchor + 3*h);
+    SV Sh = sv(ax, cross(an, ax));
+
+    SV c = cross_motion(w.v[i], qvel[6 + h] * Sh);
     SV ap = motion_act_inv(w.liMi[i], w.a[par]) + c;
     G1Real qdd = (w.u[h] - svdot(w.U[h], ap)) / w.D[h];
-    w.a[i] = ap + qdd * w.S[h];
+    w.a[i] = ap + qdd * Sh;
     qacc[6 + h] = qdd;
   }
   // base qacc -> MuJoCo convention:
-  //   angular: d/dt omega_local = body-frame spatial angular acceleration
-  //   linear:  d/dt v_world = R (a_lin_body + omega x v_body)
   V3 aw = w.a[0].a;
   V3 al = mul(w.oR[0], w.a[0].l + cross(w.v[0].a, w.v[0].l));
   qacc[0] = al.x; qacc[1] = al.y; qacc[2] = al.z;
   qacc[3] = aw.x; qacc[4] = aw.y; qacc[5] = aw.z;
-}
-
-// -------------------------------------------------- control + integration
-// PD position servo per hinge, torque-limited (matches MuJoCo <position>
-// actuator with kp/kv and jnt_actfrcrange clamping), plus soft joint limits.
-G1_FN void g1_pd_tau(const G1Config& cfg, const G1Real* qpos,
-                     const G1Real* qvel, const G1Real* ctrl, G1Real* tau,
-                     G1Real* bimp) {
-  for (int i = 0; i < 6; ++i) tau[i] = 0;
-  for (int h = 0; h < G1_NJ; ++h) {
-    G1Real q = qpos[7 + h], qd = qvel[6 + h];
-    G1Real t = g1_act_kp[h] * (ctrl[h] - q) - g1_act_kv[h] * qd;
-    G1Real lim = g1_act_frclim[h];
-    if (t >  lim) t =  lim;
-    if (t < -lim) t = -lim;
-    G1Real lo = g1_jnt_range[2*h], hi = g1_jnt_range[2*h + 1];
-    G1Real b = g1_act_kv[h] + g1_damping[h];
-    if (q < lo) { t += cfg.limit_kp * (lo - q) - cfg.limit_kd * qd; b += cfg.limit_kd; }
-    if (q > hi) { t += cfg.limit_kp * (hi - q) - cfg.limit_kd * qd; b += cfg.limit_kd; }
-    tau[6 + h] = t;
-    bimp[h] = b;
-  }
 }
 
 // Semi-implicit Euler (velocity first), quaternion integrated with the
@@ -198,11 +224,8 @@ G1_FN void g1_integrate(G1Real dt, const G1Real* qacc, G1Real* qpos,
 G1_FN void g1_step(const G1Config& cfg, G1Real* qpos, G1Real* qvel,
                    const G1Real* ctrl, G1Real* anchor, G1Ws& w,
                    G1Real* fn_out = nullptr) {
-  for (int i = 0; i < G1_NB; ++i) w.fext[i] = sv(v3(0,0,0), v3(0,0,0));
   g1_fk_vel(qpos, qvel, w);
-  g1_contacts(cfg, w, anchor, fn_out);
-  G1Real tau[G1_NV], qacc[G1_NV], bimp[G1_NJ];
-  g1_pd_tau(cfg, qpos, qvel, ctrl, tau, bimp);
-  g1_aba(cfg, qvel, tau, w, qacc, bimp);
+  G1Real qacc[G1_NV];
+  g1_aba_fused(cfg, qpos, qvel, ctrl, anchor, w, qacc, fn_out);
   g1_integrate(cfg.dt, qacc, qpos, qvel);
 }
