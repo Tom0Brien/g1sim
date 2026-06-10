@@ -66,6 +66,11 @@ class G1Sim:
         self.global_gravity = torch.zeros((3, self.nenv), dtype=torch.float32, device=self.device)
         self.global_gravity[2, :] = -1.0
         
+        # Joint limits
+        jnt_ranges = torch.tensor(m.jnt_range[1:], dtype=torch.float32, device=self.device)
+        self.joint_pos_lower = jnt_ranges[:, 0].unsqueeze(1)
+        self.joint_pos_upper = jnt_ranges[:, 1].unsqueeze(1)
+        
     def reset_done(self, done: torch.Tensor, seed: int = 42, noise: float = 0.05, drop: float = 0.02):
         """Resets environments where done is True/1."""
         assert done.shape == (self.nenv,)

@@ -118,34 +118,62 @@ def compute_reward_and_done(env, obs):
     ang_vel = obs[:, 9:12]
     joint_vel = obs[:, 41:70]
     
-    # 1. Velocity Tracking (Exp form to bound rewards)
-    lin_vel_error = torch.sum(torch.square(commands[:, :2] - lin_vel[:, :2]), dim=1)
-    ang_vel_error = torch.square(commands[:, 2] - ang_vel[:, 2])
+    # 1. Velocity Tracking (mjlab formulation)
+    xy_error = torch.sum(torch.square(commands[:, :2] - lin_vel[:, :2]), dim=1)
+    z_error = torch.square(lin_vel[:, 2])
+    lin_vel_error = xy_error + z_error
     rew_lin_vel = torch.exp(-lin_vel_error / 0.25)
-    rew_ang_vel = torch.exp(-ang_vel_error / 0.25)
     
-    # 2. Penalties
-    rew_z_vel = torch.square(lin_vel[:, 2])
-    rew_orient = torch.sum(torch.square(proj_gravity[:, :2]), dim=1) # Keep base flat
+    yaw_error = torch.square(commands[:, 2] - ang_vel[:, 2])
+    roll_pitch_error = torch.sum(torch.square(ang_vel[:, :2]), dim=1)
+    ang_vel_error = yaw_error + roll_pitch_error
+    rew_ang_vel = torch.exp(-ang_vel_error / 0.5)
+    
+    # 2. Posture/Orientation
+    orient_error = torch.sum(torch.square(proj_gravity[:, :2]), dim=1)
+    rew_orient = torch.exp(-orient_error / 0.2)
+    
+    # Variable posture reward (speed-dependent std)
+    total_speed = torch.norm(commands[:, :2], dim=1) + torch.abs(commands[:, 2])
+    standing_mask = (total_speed < 0.5).float().unsqueeze(1)
+    running_mask = (total_speed >= 1.5).float().unsqueeze(1)
+    walking_mask = 1.0 - standing_mask - running_mask
+    std = 0.05 * standing_mask + 0.2 * walking_mask + 0.3 * running_mask
+    pose_error = torch.mean(torch.square(obs[:, 12:41]) / (std**2), dim=1)
+    rew_pose = torch.exp(-pose_error)
+    
+    # 3. Penalties
     rew_action_rate = torch.sum(torch.square(env.ctrl - env.last_actions), dim=0)
     rew_joint_vel = torch.sum(torch.square(joint_vel), dim=1)
     
-    # 3. Combine
+    current_joint_pos = env.qpos[7:36, :]
+    out_of_bounds = ((current_joint_pos < env.joint_pos_lower) | (current_joint_pos > env.joint_pos_upper)).float()
+    rew_dof_limits = torch.sum(out_of_bounds, dim=0)
+    
+    # 4. Combine (weights match mjlab/tasks/velocity/velocity_env_cfg.py)
     reward = (
-        1.0 * rew_lin_vel + 
-        0.5 * rew_ang_vel - 
-        2.0 * rew_z_vel - 
-        0.2 * rew_orient - 
-        0.01 * rew_action_rate - 
+        2.0 * rew_lin_vel + 
+        2.0 * rew_ang_vel + 
+        1.0 * rew_orient +
+        1.0 * rew_pose -
+        1.0 * rew_dof_limits -
+        0.1 * rew_action_rate - 
         0.001 * rew_joint_vel
     )
     
     # 4. Termination (Base height < 0.45 or > 1.0)
-    # env.qpos is (dim, nenv), base_z is index 2
     base_z = env.qpos[2, :]
     done = ((base_z < 0.45) | (base_z > 1.0)).to(torch.uint8)
     
     return reward, done
+
+def resample_commands(env, env_ids):
+    if len(env_ids) == 0:
+        return
+    # x: [-1.0, 1.0], y: [-0.5, 0.5], yaw: [-1.0, 1.0]
+    env.commands[0, env_ids] = torch.rand(len(env_ids), device=env.device) * 2.0 - 1.0
+    env.commands[1, env_ids] = torch.rand(len(env_ids), device=env.device) * 1.0 - 0.5
+    env.commands[2, env_ids] = torch.rand(len(env_ids), device=env.device) * 2.0 - 1.0
 
 # ==============================================================================
 # Main Training Loop
@@ -168,10 +196,8 @@ def train():
     
     env = G1Sim(nenv=num_envs, device=device)
     
-    # Provide simple forward walking commands
-    env.commands[0, :] = 0.5  # target x_vel = 0.5 m/s
-    env.commands[1, :] = 0.0  # target y_vel = 0.0
-    env.commands[2, :] = 0.0  # target yaw_vel = 0.0
+    # Provide simple forward walking commands initially
+    resample_commands(env, torch.arange(num_envs, device=device))
     
     ac = ActorCritic(num_obs=99, num_actions=29).to(device)
     optimizer = optim.Adam(ac.parameters(), lr=lr)
@@ -180,6 +206,9 @@ def train():
     
     env.reset_all(noise=0.1)
     obs = env.get_obs()
+    
+    # Track command resample interval
+    command_timeout = torch.zeros(num_envs, dtype=torch.int32, device=device)
     
     for it in range(iterations):
         t0 = time.time()
@@ -193,8 +222,6 @@ def train():
                 actions, log_probs, values = ac.act(obs)
                 
             # Scale network output to joint positions (PD targets)
-            # A common approach: ctrl = default_qpos + action * action_scale
-            # Here we just treat action as a delta to the default posture
             env.ctrl[:] = env.default_joint_pos + actions.T * 0.25
             
             env.step(nsub=nsub)
@@ -203,10 +230,23 @@ def train():
             rewards, dones = compute_reward_and_done(env, next_obs)
             total_reward += rewards.mean().item()
             
+            command_timeout -= 1
+            
             # Reset environments that died
             if dones.any():
+                done_indices = dones.nonzero(as_tuple=True)[0]
                 env.reset_done(dones, noise=0.1)
-                # recompute obs for those that reset so they don't start with bad state
+                resample_commands(env, done_indices)
+                command_timeout[done_indices] = torch.randint(150, 250, (len(done_indices),), device=device, dtype=torch.int32)
+                
+            # Resample commands for envs that hit timeout but didn't die
+            timeout_indices = (command_timeout <= 0).nonzero(as_tuple=True)[0]
+            if len(timeout_indices) > 0:
+                resample_commands(env, timeout_indices)
+                command_timeout[timeout_indices] = torch.randint(150, 250, (len(timeout_indices),), device=device, dtype=torch.int32)
+                
+            # Recompute obs after resets/resamples
+            if dones.any() or len(timeout_indices) > 0:
                 next_obs = env.get_obs()
                 
             buffer.add(obs, actions, log_probs, rewards, dones, values)
