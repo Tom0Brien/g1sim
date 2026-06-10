@@ -13,6 +13,7 @@ dependencies = [
 dev = [
     "mujoco-warp>=3.8.0.3",
     "warp-lang>=1.12.0",
+    "pytest>=8.0.0",
 ]
 
 [build-system]

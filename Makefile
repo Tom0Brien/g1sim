@@ -33,8 +33,7 @@ model:
 	$(PYTHON) model/gen_model.py
 
 test: hostlib cpu-kernel
-	$(PYTHON) tests/test_vs_mujoco.py
-	$(PYTHON) tests/test_kernel_vs_host.py
+	$(PYTHON) -m pytest tests/
 
 bench-cpu: cpu-kernel
 	$(CPU_KERNEL_OUT) --nenv 4096 --steps 250

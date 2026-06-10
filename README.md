@@ -41,7 +41,7 @@ make gpu          # real CUDA build: nvcc --expt-relaxed-constexpr
 
 To benchmark the CUDA implementation against `mujoco_warp`:
 ```bash
-uv run python tests/benchmark_warp.py
+uv run python examples/benchmark_warp.py
 ```
 
 ## Performance & Benchmarks
