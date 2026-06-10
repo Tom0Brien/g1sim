@@ -10,7 +10,7 @@ if sys.platform == "win32":
 else:
     lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.so"))
 P = lambda a: a.ctypes.data_as(C.POINTER(C.c_double))
-m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "g1_stripped.xml"))
+m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "..", "model", "g1_stripped.xml"))
 NQ, NV, NU, NC = m.nq, m.nv, m.nu, 8
 
 exe_name = "g1bench_cpu.exe" if sys.platform == "win32" else "g1bench_cpu"

@@ -10,16 +10,16 @@ generality — that is the point.
 ## Layout
 
 ```
-tools/gen_model.py      MJCF -> g1_model.h generator (+ stripped oracle XML)
-tools/g1_raw.xml        official menagerie g1.xml (29 DoF)
-tools/fake_cuda.h       CPU shim: compiles/runs the kernel TU without a GPU
+model/gen_model.py      MJCF -> g1_model.h generator (+ stripped oracle XML)
+model/g1_raw.xml        official menagerie g1.xml (29 DoF)
+model/fake_cuda.h       CPU shim: compiles/runs the kernel TU without a GPU
 src/g1_types.h          scalar precision switch, tunable config
 src/g1_model.h          GENERATED: tree, inertias, joints, gains, contacts
 src/spatial.h           spatial algebra ([angular; linear], body-frame)
 src/g1_core.h           FK, contacts, ABA, PD, integrator (host/device)
 src/g1_kernel.cu        thread-per-env step/reset kernels + benchmark
 src/host_lib.cpp        C ABI for ctypes validation (double precision)
-tests/g1_stripped.xml   GENERATED: the MuJoCo oracle model
+model/g1_stripped.xml   GENERATED: the MuJoCo oracle model
 tests/test_vs_mujoco.py oracle validation suite
 tests/test_kernel_vs_host.py  float kernel vs double reference
 ```
@@ -32,7 +32,7 @@ make test       # full validation (needs: pip install mujoco)
 make bench-cpu  # kernel benchmark through the CPU shim
 make gpu        # real CUDA build: nvcc --expt-relaxed-constexpr, ARCH=sm_XX
 ./build/g1bench --nenv 8192 --steps 1000        # GPU benchmark
-make model      # regenerate g1_model.h from tools/g1_raw.xml
+make model      # regenerate g1_model.h from model/g1_raw.xml
 ```
 
 ## Validation status (measured, reproducible via `make test`)

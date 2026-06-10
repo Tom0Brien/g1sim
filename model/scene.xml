@@ -29,9 +29,6 @@
       texuniform="true" texrepeat="8 8"
       reflectance="0.15" specular="0.3" shininess="0.5"
       rgba="1 1 1 1"/>
-
-    <!-- accent material for decorative ring -->
-    <material name="accent" rgba="0.08 0.08 0.08 0.4" specular="0.6" shininess="0.9"/>
   </asset>
 
   <!-- ── world geometry ───────────────────────────────────────────────── -->

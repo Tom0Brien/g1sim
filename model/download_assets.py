@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Download Unitree G1 mesh assets from MuJoCo Menagerie on GitHub.
 
-Downloads the STL files referenced by tools/g1_raw.xml into tools/assets/
+Downloads the STL files referenced by model/g1_raw.xml into model/assets/
 so the full visual model can be rendered in the MuJoCo viewer.
 """
 import os, re, urllib.request, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
-RAW_XML = os.path.join(ROOT, "tools", "g1_raw.xml")
-ASSETS_DIR = os.path.join(ROOT, "tools", "assets")
+RAW_XML = os.path.join(HERE, "g1_raw.xml")
+ASSETS_DIR = os.path.join(HERE, "assets")
 
 BASE_URL = "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/main/unitree_g1/assets"
 

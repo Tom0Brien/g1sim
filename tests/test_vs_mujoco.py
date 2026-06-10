@@ -27,7 +27,7 @@ prec = lib.g1_sizes(C.byref(nb), C.byref(nq), C.byref(nv), C.byref(nu), C.byref(
 NB, NQ, NV, NU, NC = nb.value, nq.value, nv.value, nu.value, nc.value
 assert prec == 8, "build host lib with G1_PRECISION=8 for validation"
 
-m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "g1_stripped.xml"))
+m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "..", "model", "g1_stripped.xml"))
 d = mujoco.MjData(m)
 assert (m.nbody - 1, m.nq, m.nv, m.nu) == (NB, NQ, NV, NU)
 rng = np.random.default_rng(0)

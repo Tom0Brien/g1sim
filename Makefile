@@ -25,7 +25,7 @@ hostlib: build
 # Kernel code path compiled for CPU through the fake-CUDA shim (float)
 cpu-kernel: build
 	$(CXX) -O3 -march=native -fopenmp -std=c++17 -DFAKE_CUDA \
-	  -Isrc -Itools -x c++ src/g1_kernel.cu -o $(CPU_KERNEL_OUT) \
+	  -Isrc -Imodel -x c++ src/g1_kernel.cu -o $(CPU_KERNEL_OUT) \
 	  -Wall -Wextra
 
 # Real GPU build (requires CUDA toolkit; not testable in the dev container)
@@ -33,9 +33,9 @@ gpu: build
 	$(NVCC) -O3 -arch=$(ARCH) --expt-relaxed-constexpr -use_fast_math \
 	  -std=c++17 -Isrc src/g1_kernel.cu -o build/g1bench
 
-# Regenerate src/g1_model.h + tests/g1_stripped.xml from the menagerie MJCF
+# Regenerate src/g1_model.h + model/g1_stripped.xml from the menagerie MJCF
 model:
-	$(PYTHON) tools/gen_model.py
+	$(PYTHON) model/gen_model.py
 
 test: hostlib cpu-kernel
 	$(PYTHON) tests/test_vs_mujoco.py

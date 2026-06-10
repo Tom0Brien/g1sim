@@ -34,10 +34,10 @@ NB, NQ, NV, NU, NC = nb.value, nq.value, nv.value, nu.value, nc.value
 
 # ── load MuJoCo model (for rendering only) ──────────────────────────────
 # Priority: scene.xml (full lighting + floor) > g1_raw.xml > stripped model
-scene_xml = os.path.join(ROOT, "tools", "scene.xml")
-raw_xml = os.path.join(ROOT, "tools", "g1_raw.xml")
-stripped_xml = os.path.join(HERE, "g1_stripped.xml")
-assets_dir = os.path.join(ROOT, "tools", "assets")
+scene_xml = os.path.join(ROOT, "model", "scene.xml")
+raw_xml = os.path.join(ROOT, "model", "g1_raw.xml")
+stripped_xml = os.path.join(ROOT, "model", "g1_stripped.xml")
+assets_dir = os.path.join(ROOT, "model", "assets")
 has_meshes = (os.path.isdir(assets_dir) and
               len([f for f in os.listdir(assets_dir) if f.endswith(".STL")]) >= 20)
 use_visual_model = False
@@ -52,7 +52,7 @@ elif has_meshes and os.path.exists(raw_xml):
     use_visual_model = True
 else:
     if not has_meshes:
-        print("Mesh assets not found — run: python tools/download_assets.py")
+        print("Mesh assets not found — run: python model/download_assets.py")
     print("Falling back to stripped model (inertia-box visualization)")
     m = mujoco.MjModel.from_xml_path(stripped_xml)
 d = mujoco.MjData(m)
