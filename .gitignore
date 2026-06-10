@@ -1,0 +1,28 @@
+# Build outputs
+build/
+
+# Pixi environment
+.pixi/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+
+# CUDA
+*.o
+*.obj
+*.exp
+*.lib
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

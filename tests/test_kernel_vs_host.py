@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""Cross-validate the CUDA kernel code path (built via the CPU shim, float)
+against the double-precision host library that was validated vs MuJoCo."""
+import ctypes as C, numpy as np, subprocess, os, sys, mujoco
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.join(HERE, "..")
+if sys.platform == "win32":
+    lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.dll"))
+else:
+    lib = C.CDLL(os.path.join(ROOT, "build", "libg1host.so"))
+P = lambda a: a.ctypes.data_as(C.POINTER(C.c_double))
+m = mujoco.MjModel.from_xml_path(os.path.join(HERE, "g1_stripped.xml"))
+NQ, NV, NU, NC = m.nq, m.nv, m.nu, 8
+
+exe_name = "g1bench_cpu.exe" if sys.platform == "win32" else "g1bench_cpu"
+out = subprocess.run([os.path.join(ROOT, "build", exe_name),
+                      "--dump", "--steps", "500"],
+                     capture_output=True, text=True, check=True).stdout
+traj_f = np.array([[float(x) for x in l.split()] for l in out.strip().splitlines()])
+
+qp = m.key_qpos[0].copy(); qp[2] += 0.02
+qv = np.zeros(NV); ctrl = m.key_qpos[0][7:].copy()
+fn = np.zeros(NC); anchor = np.full(2 * NC, 1e30)
+traj_d = []
+for i in range(500):
+    lib.g1_c_step(P(qp), P(qv), P(ctrl), 1, C.c_double(2e-3), P(fn), P(anchor))
+    traj_d.append(qp.copy())
+err = np.abs(traj_f - np.array(traj_d))
+print(f"float kernel vs double host, 500 steps incl. impact: "
+      f"max|dq|={err[-1].max():.3e}")
+assert err[-1].max() < 5e-3
+print("KERNEL CROSS-VALIDATION PASSED")
