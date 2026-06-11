@@ -70,5 +70,9 @@ Designed for direct tensor wrapping:
 - **Zero-Copy:** Persistent states (`qpos[36] + qvel[35] + anchor[16]`) are stored in Struct-of-Arrays (SoA) format. Wrap them directly with DLPack / PyTorch / JAX.
 - **Simple API:** Your training loop owns the `ctrl` buffer and calls `g1_step_kernel(nsub)`. Observations and rewards are calculated in your framework using the raw state tensors.
 
+### Included Training Pipeline
+The project includes a complete, high-performance reinforcement learning pipeline for training locomotion policies:
+- **`examples/train.py`**: A fully functional PPO implementation that trains a robust walking policy directly on the GPU in minutes. It matches benchmark configurations for optimal posture and velocity tracking.
+- **`examples/play.py`**: An interactive MuJoCo viewer script to test and evaluate the trained policy (`policy.pt`) in real-time with keyboard velocity commands.
 ---
 *Note: This engine is purpose-built for speed over generality. It intentionally does not model internal frictionloss, upper-body mesh collisions, or generic constraints.*
