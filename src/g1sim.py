@@ -71,7 +71,7 @@ class G1Sim:
         self.joint_pos_lower = jnt_ranges[:, 0].unsqueeze(1)
         self.joint_pos_upper = jnt_ranges[:, 1].unsqueeze(1)
 
-        # Action scales matching mjlab G1
+        # Action scale
         # Computed as 0.25 * effort_limit / stiffness per actuator
         self.action_scale = torch.tensor([
             0.443200, 0.274054, 0.443200, 0.274054, 0.365131, 0.365131, # left leg
