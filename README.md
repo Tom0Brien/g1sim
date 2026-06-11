@@ -71,3 +71,8 @@ The project includes a complete, high-performance reinforcement learning pipelin
 - **`examples/play.py`**: An interactive MuJoCo viewer script to test and evaluate the trained policy (`policy.pt`) in real-time with keyboard velocity commands.
 ---
 *Note: This engine is purpose-built for speed over generality. It intentionally does not model internal frictionloss, upper-body mesh collisions, or generic constraints.*
+
+## 🙏 Acknowledgments
+This project builds upon the fantastic work from:
+- **[MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie)**: For providing the high-quality Unitree G1 robot models and MJCF files used as the foundation of this simulation.
+- **[mjlab](https://github.com/google-deepmind/mujoco_playground)**: For the excellent baseline locomotion configurations, reward formulations, and training parameters which heavily inspired the RL setup included in this project.
