@@ -70,6 +70,16 @@ class G1Sim:
         jnt_ranges = torch.tensor(m.jnt_range[1:], dtype=torch.float32, device=self.device)
         self.joint_pos_lower = jnt_ranges[:, 0].unsqueeze(1)
         self.joint_pos_upper = jnt_ranges[:, 1].unsqueeze(1)
+
+        # Action scales matching mjlab G1
+        # Computed as 0.25 * effort_limit / stiffness per actuator
+        self.action_scale = torch.tensor([
+            0.443200, 0.274054, 0.443200, 0.274054, 0.365131, 0.365131, # left leg
+            0.443200, 0.274054, 0.443200, 0.274054, 0.365131, 0.365131, # right leg
+            0.443200, 0.365131, 0.365131,                               # waist
+            0.365131, 0.365131, 0.365131, 0.365131, 0.365131, 0.074501, 0.074501, # left arm
+            0.365131, 0.365131, 0.365131, 0.365131, 0.365131, 0.074501, 0.074501  # right arm
+        ], dtype=torch.float32, device=self.device).unsqueeze(1)
         
     def reset_done(self, done: torch.Tensor, seed: int = 42, noise: float = 0.05, drop: float = 0.02):
         """Resets environments where done is True/1."""

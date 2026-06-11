@@ -44,8 +44,8 @@ def play():
     d.qpos[:] = env.qpos[:, 0].cpu().numpy()
     mujoco.mj_forward(m, d)
     
-    nsub = 10
-    control_dt = 2e-3 * nsub  # 20ms policy step
+    nsub = 20
+    control_dt = 1e-3 * nsub  # 20ms policy step
     
     print("Launching viewer.")
     print("Controls:")
@@ -94,15 +94,27 @@ def play():
                     obs = env.get_obs()
                     
                     # Deterministic action for evaluation
-                    action, _ = ac.forward(obs)
+                    obs_norm = ac.normalize_obs(obs)
+                    action = ac.actor(obs_norm)
                     
-                    env.ctrl[:] = env.default_joint_pos + action.T * 0.25
+                    env.actions = action.T
+                    env.ctrl[:] = env.default_joint_pos + env.actions * env.action_scale
                     env.step(nsub=nsub)
                     
-                    # Auto-reset if fallen
-                    base_z = env.qpos[2, 0].item()
-                    if base_z < 0.45 or base_z > 1.0:
+                    # Auto-reset if fallen (orientation-based)
+                    q = env.qpos[3:7, :]
+                    qw, qx, qy, qz = q[0], q[1], q[2], q[3]
+                    # Projected gravity z-component
+                    grav_z = -(1.0 - 2.0*(qx*qx + qy*qy))
+                    tilt = torch.acos(torch.clamp(-grav_z, -1.0, 1.0)).abs()
+                    if torch.isnan(env.qpos).any() or torch.abs(env.qpos).max() > 1000.0:
+                        print("Invalid state detected! Simulation blew up.")
                         env.reset_all(noise=0.0)
+                        torch.cuda.current_stream().synchronize()
+                        continue
+                    if tilt.item() > 1.2217:  # 70 degrees
+                        env.reset_all(noise=0.0)
+                        torch.cuda.current_stream().synchronize()
                 
                 # Sync state back to MuJoCo for rendering
                 d.qpos[:] = env.qpos[:, 0].cpu().numpy()

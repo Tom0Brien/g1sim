@@ -45,11 +45,11 @@ G1_FN G1Config g1_default_config() {
   G1Config c;
   c.gravity_z  = G1Real(-9.81);
   c.contact_kn = G1Real(2e4);
-  c.contact_dn = G1Real(200);
+  c.contact_dn = G1Real(280);   // critical damping for ~1kg effective mass
   c.contact_kt = G1Real(1e4);
-  c.contact_dt = G1Real(200);
+  c.contact_dt = G1Real(280);
   c.limit_kp   = G1Real(200);
   c.limit_kd   = G1Real(5);
-  c.dt         = G1Real(2e-3);
+  c.dt         = G1Real(1e-3);
   return c;
 }

@@ -130,6 +130,7 @@ G1_FN void g1_aba_fused(const G1Config& cfg, const G1Real* qpos, const G1Real* q
       V3 vp = mul(w.oR[b], w.v[b].l + cross(w.v[b].a, r)); // point vel, world
       fn = cfg.contact_kn * depth - cfg.contact_dn * vp.z;
       if (fn < 0) fn = 0;
+      if (fn > G1Real(500)) fn = G1Real(500);  // clamp to prevent divergence
       if (anchor[2*k] >= G1_ANCHOR_FREE) {                 // new touchdown
         anchor[2*k] = p.x; anchor[2*k+1] = p.y;
       }
@@ -139,8 +140,8 @@ G1_FN void g1_aba_fused(const G1Config& cfg, const G1Real* qpos, const G1Real* q
       if (ftn > fmax) {                                    // slip: project +
         G1Real sc = fmax / (ftn + G1Real(1e-12));          // drag the anchor
         ftx *= sc; fty *= sc;
-        anchor[2*k]   = p.x + (ftx + cfg.contact_dt * vp.x) / cfg.contact_kt;
-        anchor[2*k+1] = p.y + (fty + cfg.contact_dt * vp.y) / cfg.contact_kt;
+        anchor[2*k]   = p.x + ftx / cfg.contact_kt;
+        anchor[2*k+1] = p.y + fty / cfg.contact_kt;
       }
       V3 fw = v3(ftx, fty, fn);
       V3 fb = mulT(w.oR[b], fw);                           // to body frame
